@@ -15,12 +15,14 @@ The current scaffold focuses on reproducing the paper's core Monte Carlo machine
 
 - `sabr_replicate.py`: core implementation
 - `run_experiments.py`: CLI entrypoint for tables, figures, and validation
+- `notebooks/replication_sanity_checks.ipynb`: notebook with model-level sanity checks and validation summaries
+- `requirements.txt`: lightweight dependency list for the replication environment
 
 ## What is implemented
 
 - Exact volatility stepping
-- Conditional moment formulas for the normalized integrated variance
-- Shifted-lognormal approximation with fixed shift `lambda = 5/6`
+- PyFeng-backed conditional moment formulas for the normalized integrated variance
+- PyFeng-backed shifted-lognormal parameter fitting with fixed shift `lambda = 5/6`
 - Exact CEV sampling for `0 < beta < 1`
 - Special handling for `beta = 1` and `|rho| = 1`
 - European call pricing from Monte Carlo samples
@@ -29,10 +31,16 @@ The current scaffold focuses on reproducing the paper's core Monte Carlo machine
 - Figure 1 moment-comparison dataset
 - Figure 2 / Table 7 convergence dataset
 - Figure 3 comparison dataset between the paper scheme and Islah's approximation
-- Paper-reference rows for analytic approximations and legacy Monte Carlo baselines
+- PyFeng analytic approximation rows where the package already provides them, plus paper-reference rows for the remaining baselines
 - A 2D SABR PDE / finite-difference benchmark solver in `(F, log sigma)` coordinates
 - CLI support for switching benchmark sources with `--benchmark-source paper|fdm|mc|none`
 - A regression test covering the `rho = 1` Islah edge case
+- A notebook with extra sanity checks outside the paper tables:
+  1. `nu = 0` CEV limit
+  2. `beta = 1, nu = 0` Black-Scholes limit
+  3. martingale checks across maturities
+  4. `|rho| = 1` Islah stability
+  5. quick validation summary
 
 ## What is not implemented yet
 
@@ -53,7 +61,13 @@ This means the main replication target now looks successful, while Table 1 still
 
 ## Run
 
-Run with any Python that has `numpy` and `pandas` installed:
+Install the small dependency set first:
+
+```powershell
+python -m pip install -r .\requirements.txt
+```
+
+Then run the CLI:
 
 ```powershell
 python .\run_experiments.py --experiment table1 --paper-scale
@@ -79,9 +93,16 @@ python .\run_experiments.py --experiment validate --paper-scale --benchmark-sour
 pytest -q .\tests\test_islah_rho1.py
 ```
 
+For an explanation-oriented walkthrough rather than a test log, open:
+
+```text
+.\notebooks\replication_sanity_checks.ipynb
+```
+
 ## Notes
 
 - The paper's formulas were transcribed from the PDF and implemented directly.
+- We now rely on [PyFENG](https://pyfeng.readthedocs.io/en/latest/) for building blocks it already exposes well: conditional average-variance moments, shifted-lognormal moment fitting, and several analytic SABR approximation models.
 - `--benchmark-source paper` uses the tabulated paper benchmarks when they are available.
 - `--benchmark-source fdm` recomputes benchmark prices with the built-in PDE/FDM solver.
 - `table7` / `figure3` fall back to the internal high-resolution Monte Carlo benchmark unless `--benchmark-source fdm` is requested.

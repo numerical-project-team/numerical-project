@@ -8,9 +8,11 @@ from typing import Callable, Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+try:
+    import pyfeng as pf
+except ImportError:  # pragma: no cover - exercised indirectly through README fallback instructions
+    pf = None
 
-SQRT_2 = math.sqrt(2.0)
-SQRT_2PI = math.sqrt(2.0 * math.pi)
 EPS = 1e-14
 PDF_FLOOR = 1e-300
 
@@ -67,6 +69,12 @@ TABLE5_ANALYTIC_REFERENCE = {
     "Hyb ZC Map": np.array([3.07, 4.53, 3.86, 2.37, 1.00, -0.10, 0.52], dtype=float),
 }
 
+PYFENG_ANALYTIC_MODELS = (
+    ("Hagan", "SabrHagan2002"),
+    ("Choi-Wu P", "SabrChoiWu2021P"),
+    ("Choi-Wu H", "SabrChoiWu2021H"),
+)
+
 TABLE6_BASELINE_REFERENCE = {
     ("Euler", 1.0 / 400.0): {"bias_x1e3": np.array([1.6, 1.5, 1.5, 1.4, 1.3, 1.2], dtype=float), "time_sec": 4.12},
     ("Euler", 1.0 / 800.0): {"bias_x1e3": np.array([0.7, 0.6, 0.5, 0.5, 0.4, 0.3], dtype=float), "time_sec": 8.26},
@@ -83,58 +91,6 @@ TABLE7_PAPER_REFERENCE = [
     {"n_paths": 1_280_000, "step": 0.125, "rms_error_x1e3": 0.86, "time_sec": 41.35},
     {"n_paths": 2_560_000, "step": 0.0625, "rms_error_x1e3": 0.59, "time_sec": 279.53},
 ]
-
-
-def _norm_pdf(x: np.ndarray) -> np.ndarray:
-    """Standard normal PDF used throughout Proposition 2 and Algorithm 1."""
-    return np.exp(-0.5 * x * x) / SQRT_2PI
-
-
-def _norm_cdf(x: np.ndarray) -> np.ndarray:
-    """Fast vectorized standard normal CDF.
-
-    Uses the Numerical Recipes / A&S-style `erfc` approximation in vectorized
-    NumPy form instead of `np.vectorize(math.erf)`. This is both faster and
-    more numerically stable in the tails, which matters for Proposition 2.
-    """
-    z = np.asarray(x, dtype=float) / SQRT_2
-    t = 1.0 / (1.0 + 0.5 * np.abs(z))
-    tau = t * np.exp(
-        -z * z
-        - 1.26551223
-        + t
-        * (
-            1.00002368
-            + t
-            * (
-                0.37409196
-                + t
-                * (
-                    0.09678418
-                    + t
-                    * (
-                        -0.18628806
-                        + t
-                        * (
-                            0.27886807
-                            + t
-                            * (
-                                -1.13520398
-                                + t
-                                * (
-                                    1.48851587
-                                    + t * (-0.82215223 + t * 0.17087277)
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        )
-    )
-    erf_z = np.where(z >= 0.0, 1.0 - tau, tau - 1.0)
-    return 0.5 * (1.0 + erf_z)
-
 
 def _safe_ratio(num: np.ndarray, den: np.ndarray, fallback: float | np.ndarray) -> np.ndarray:
     """Elementwise ratio with a configurable fallback when the denominator is tiny."""
@@ -651,69 +607,33 @@ def conditional_integrated_variance_moments(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return the first four raw moments of `I_t^h`.
 
-    Implements Proposition 2 in the paper. This is the key moment engine behind
-    Algorithm 1 and is designed to support later replication of Figure 1, Table 1,
-    and Table 2.
+    We now delegate the raw-moment evaluation to `pyfeng.SabrMcTimeDisc`, which
+    already implements the conditional average-variance moment formulas used in
+    SABR literature. This keeps the project focused on the paper-specific
+    conditional forward / CEV machinery rather than reimplementing the same
+    average-variance building blocks.
     """
+    _require_pyfeng()
     sigma_t = np.asarray(sigma_t, dtype=float)
     sigma_next = np.asarray(sigma_next, dtype=float)
     hat_nu = nu * math.sqrt(h)
-    small_hat_nu = abs(hat_nu) < 1e-2
 
     if abs(hat_nu) < EPS:
         ones = np.ones_like(sigma_t, dtype=float)
         return ones, ones, ones, ones
 
-    if small_hat_nu:
-        # Appendix A: use the small-hat_nu asymptotics instead of the exact closed form
-        # when cancellation dominates the Proposition 2 formulas numerically.
-        z_hat = np.log(sigma_next / sigma_t) / hat_nu
-        mu1 = np.exp(hat_nu * z_hat)
-        cv = abs(hat_nu) / math.sqrt(3.0)
-        skewness = (6.0 * math.sqrt(3.0) / 5.0) * hat_nu
-        ex_kurtosis = (276.0 / 35.0) * (hat_nu**2)
-
-        var = (mu1 * cv) ** 2
-        mu3_c = skewness * (var ** 1.5)
-        mu4_c = (ex_kurtosis + 3.0) * (var**2)
-
-        mu2_raw = var + mu1 * mu1
-        mu3_raw = mu3_c + 3.0 * mu1 * var + mu1**3
-        mu4_raw = mu4_c + 4.0 * mu1 * mu3_c + 6.0 * mu1 * mu1 * var + mu1**4
-        return mu1, mu2_raw, mu3_raw, mu4_raw
-
     z_hat = np.log(sigma_next / sigma_t) / hat_nu
-    ratio = sigma_next / sigma_t
-    c = 0.5 * (ratio + 1.0 / ratio)
-
-    def m(k: int) -> np.ndarray:
-        kk = k * hat_nu
-        top = _norm_cdf(z_hat + kk) - _norm_cdf(z_hat - kk)
-        root = np.sqrt(z_hat * z_hat + kk * kk)
-        bot = 2.0 * kk * _norm_pdf(root)
-        top_fallback = 2.0 * kk * _norm_pdf(z_hat)
-        stable_top = np.where(np.abs(top) > PDF_FLOOR, top, top_fallback)
-
-        # Outside the genuine small-hat_nu regime, avoid forcing m_k -> 1 when the
-        # denominator underflows. The central-difference approximation implies
-        # m_k ~ n(z_hat) / n(sqrt(z_hat^2 + (k hat_nu)^2)) = exp((k hat_nu)^2 / 2).
-        conservative_fallback = np.exp(0.5 * kk * kk)
-        return _safe_ratio(stable_top, bot, fallback=conservative_fallback)
-
-    m1 = m(1)
-    m2 = m(2)
-    m3 = m(3)
-    m4 = m(4)
-
-    mu1 = ratio * m1
-    mu2_raw = ratio**2 * (m2 - c * m1) / (hat_nu**2)
-    mu3_raw = ratio**3 * (3.0 * m3 - 8.0 * c * m2 + (4.0 * c * c + 1.0) * m1) / (
-        8.0 * hat_nu**4
+    mu1, mu2_raw, mu3_raw, mu4_raw = pf.SabrMcTimeDisc.cond_avgvar_mvsk(
+        abs(hat_nu),
+        z_hat,
+        mnc=True,
     )
-    mu4_raw = ratio**4 * (
-        2.0 * m4 - 9.0 * c * m3 + (12.0 * c * c + 2.0) * m2 - c * (4.0 * c * c + 3.0) * m1
-    ) / (24.0 * hat_nu**6)
-    return mu1, mu2_raw, mu3_raw, mu4_raw
+    return (
+        np.asarray(mu1, dtype=float),
+        np.asarray(mu2_raw, dtype=float),
+        np.asarray(mu3_raw, dtype=float),
+        np.asarray(mu4_raw, dtype=float),
+    )
 
 
 def raw_moments_to_central_stats(
@@ -761,13 +681,24 @@ def sample_conditional_integrated_variance(
     rng: np.random.Generator,
 ) -> np.ndarray:
     """Sample `I_t^h` with the shifted-lognormal approximation in Algorithm 1 / Eq. (9)."""
-    mu1, mu2_raw, mu3_raw, mu4_raw = conditional_integrated_variance_moments(
-        sigma_t, sigma_next, nu, h
+    _require_pyfeng()
+    sigma_t = np.asarray(sigma_t, dtype=float)
+    sigma_next = np.asarray(sigma_next, dtype=float)
+    hat_nu = nu * math.sqrt(h)
+
+    if abs(hat_nu) < EPS:
+        return np.ones_like(sigma_t, dtype=float)
+
+    z_hat = np.log(sigma_next / sigma_t) / hat_nu
+    mu1, sigma_sln, lambda_sln = pf.SabrMcTimeDisc.cond_avgvar_lnshift_params(
+        abs(hat_nu),
+        z_hat,
+        ratio=5.0 / 6.0,
     )
-    _, _, _, cv, _, _ = raw_moments_to_central_stats(mu1, mu2_raw, mu3_raw, mu4_raw)
-    sigma_sln = np.sqrt(np.log1p((36.0 / 25.0) * cv * cv))
-    x = rng.standard_normal(size=np.asarray(sigma_t).shape)
-    return (mu1 / 6.0) * (1.0 + 5.0 * np.exp(sigma_sln * x - 0.5 * sigma_sln * sigma_sln))
+    x = rng.standard_normal(size=sigma_t.shape)
+    return np.asarray(mu1, dtype=float) * (
+        (1.0 - lambda_sln) + lambda_sln * np.exp(sigma_sln * x - 0.5 * sigma_sln * sigma_sln)
+    )
 
 
 def sample_cev_exact(
@@ -1371,6 +1302,133 @@ def _case_params(case_name: str, maturity: float | None = None) -> tuple[SABRPar
     return params, maturity_value
 
 
+def _pyfeng_is_available() -> bool:
+    """Return whether pyfeng is available for analytic SABR / CEV reference calculations."""
+    return pf is not None
+
+
+def _require_pyfeng() -> None:
+    """Raise a clear error if pyfeng-dependent functionality is used without the dependency."""
+    if pf is None:
+        raise ImportError(
+            "pyfeng is required for this functionality. Install `pyfeng` and `scipy` first."
+        )
+
+
+def _pyfeng_analytic_rows(
+    table_name: str,
+    case_name: str,
+    params: SABRParams,
+    maturity: float,
+    strike_ratios: Sequence[float],
+    strikes: Sequence[float],
+    benchmark_prices: Mapping[float, float] | None,
+) -> pd.DataFrame:
+    """Generate analytic SABR reference rows using pyfeng's built-in approximation models."""
+    if pf is None:
+        raise ImportError("pyfeng is not installed; analytic rows cannot be generated from the package.")
+
+    rows = []
+    strikes_arr = np.asarray(strikes, dtype=float)
+    benchmark_prices = {} if benchmark_prices is None else benchmark_prices
+    benchmark_arr = np.asarray(
+        [benchmark_prices.get(float(strike), np.nan) for strike in strikes_arr],
+        dtype=float,
+    )
+
+    for label, class_name in PYFENG_ANALYTIC_MODELS:
+        model_cls = getattr(pf, class_name)
+        model = model_cls(
+            sigma=params.sigma0,
+            vov=params.nu,
+            rho=params.rho,
+            beta=params.beta,
+            is_fwd=True,
+        )
+        prices = np.asarray(model.price(strikes_arr, params.f0, maturity), dtype=float)
+        biases = prices - benchmark_arr
+        for ratio, strike, benchmark_price, mean_price, bias in zip(
+            strike_ratios,
+            strikes_arr,
+            benchmark_arr,
+            prices,
+            biases,
+            strict=False,
+        ):
+            rows.append(
+                {
+                    "table": table_name,
+                    "case": case_name,
+                    "model": label,
+                    "source": "pyfeng",
+                    "strike_ratio": float(ratio),
+                    "strike": float(strike),
+                    "benchmark_price": float(benchmark_price),
+                    "mean_price": float(mean_price),
+                    "bias": float(bias),
+                    "bias_x1e3": float(1e3 * bias),
+                    "stdev_price": np.nan,
+                    "stderr_price": np.nan,
+                    "runtime_sec_mean": np.nan,
+                    "step": np.nan,
+                    "maturity": float(maturity),
+                    "n_paths": np.nan,
+                    "n_repeats": np.nan,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _analytic_reference_rows(
+    table_name: str,
+    case_name: str,
+    params: SABRParams,
+    maturity: float,
+    strike_ratios: Sequence[float],
+    strikes: Sequence[float],
+    benchmark_prices: Mapping[float, float] | None,
+    paper_reference_biases_x1e3: Mapping[str, np.ndarray],
+) -> pd.DataFrame:
+    """Combine package-backed analytic rows with paper-only rows we still cannot compute."""
+    frames = []
+    if _pyfeng_is_available():
+        frames.append(
+            _pyfeng_analytic_rows(
+                table_name=table_name,
+                case_name=case_name,
+                params=params,
+                maturity=maturity,
+                strike_ratios=strike_ratios,
+                strikes=strikes,
+                benchmark_prices=benchmark_prices,
+            )
+        )
+
+    residual_reference = dict(paper_reference_biases_x1e3)
+    if _pyfeng_is_available():
+        residual_reference.pop("Hagan", None)
+
+    if residual_reference:
+        if benchmark_prices is None:
+            benchmark_seq = np.full(len(strikes), np.nan, dtype=float)
+        else:
+            benchmark_seq = [benchmark_prices.get(float(strike), np.nan) for strike in strikes]
+        frames.append(
+            _reference_bias_rows(
+                table_name=table_name,
+                case_name=case_name,
+                params=params,
+                strike_ratios=strike_ratios,
+                benchmark_prices=benchmark_seq,
+                reference_biases_x1e3=residual_reference,
+            )
+        )
+
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
 def _reference_bias_rows(
     table_name: str,
     case_name: str,
@@ -1465,13 +1523,15 @@ def run_table4_experiment(
         rows.append(summary)
 
     rows.append(
-        _reference_bias_rows(
+        _analytic_reference_rows(
             table_name="Table 4",
             case_name="Case I",
             params=params,
+            maturity=maturity,
             strike_ratios=strike_ratios,
-            benchmark_prices=TABLE4_FDM,
-            reference_biases_x1e3=TABLE4_ANALYTIC_REFERENCE,
+            strikes=strikes,
+            benchmark_prices=benchmark_prices,
+            paper_reference_biases_x1e3=TABLE4_ANALYTIC_REFERENCE,
         )
     )
     return pd.concat(rows, ignore_index=True)
@@ -1515,13 +1575,15 @@ def run_table5_experiment(
         rows.append(summary)
 
     rows.append(
-        _reference_bias_rows(
+        _analytic_reference_rows(
             table_name="Table 5",
             case_name="Case II",
             params=params,
+            maturity=maturity,
             strike_ratios=strike_ratios,
-            benchmark_prices=TABLE5_FDM,
-            reference_biases_x1e3=TABLE5_ANALYTIC_REFERENCE,
+            strikes=strikes,
+            benchmark_prices=benchmark_prices,
+            paper_reference_biases_x1e3=TABLE5_ANALYTIC_REFERENCE,
         )
     )
     return pd.concat(rows, ignore_index=True)
