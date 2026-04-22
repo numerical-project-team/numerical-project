@@ -755,6 +755,35 @@ def sample_cev_exact(
     return out
 
 
+def _simulate_terminal_forward_zero_vov(
+    params: SABRParams,
+    mc: MonteCarloConfig,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Exact terminal sampler for the `nu = 0` degeneracy.
+
+    When the vol-of-vol vanishes, the SABR model reduces to a time-homogeneous
+    CEV model, and the terminal law no longer depends on `rho`. Handling this
+    branch explicitly avoids leaking the generic correlated-SABR approximation
+    into a regime where an exact transition is already available.
+    """
+    if abs(params.beta) < EPS:
+        raise NotImplementedError("The beta=0 normal-SABR case is not included in this starter.")
+
+    if mc.maturity <= 0.0:
+        return np.full(mc.n_paths, params.f0, dtype=float)
+
+    variance_scale = np.full(mc.n_paths, params.sigma0 * params.sigma0 * mc.maturity, dtype=float)
+    initial_forward = np.full(mc.n_paths, params.f0, dtype=float)
+
+    if params.beta_star < 1e-8:
+        z = rng.standard_normal(size=mc.n_paths)
+        total_var = variance_scale
+        return initial_forward * np.exp(np.sqrt(total_var) * z - 0.5 * total_var)
+
+    return sample_cev_exact(initial_forward, variance_scale, params.beta, rng)
+
+
 def _simulate_terminal_forward_scheme(
     params: SABRParams,
     mc: MonteCarloConfig,
@@ -762,6 +791,9 @@ def _simulate_terminal_forward_scheme(
 ) -> np.ndarray:
     """Terminal-price simulator for the SABR model under either the paper scheme or Islah's scheme."""
     rng = np.random.default_rng(mc.seed)
+    if abs(params.nu) < EPS:
+        return _simulate_terminal_forward_zero_vov(params, mc, rng)
+
     f = np.full(mc.n_paths, params.f0, dtype=float)
     sigma = np.full(mc.n_paths, params.sigma0, dtype=float)
 
@@ -2145,3 +2177,4 @@ def run_full_validation(
 def rerun_paper_scale_validation() -> dict[str, object]:
     """Convenience helper for a full paper-scale validation run."""
     return run_full_validation(quick_mode=False)
+
