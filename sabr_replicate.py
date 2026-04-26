@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import math
 import time
-from typing import Callable, Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -16,7 +16,7 @@ except ImportError:  # pragma: no cover - exercised indirectly through README fa
 EPS = 1e-14
 PDF_FLOOR = 1e-300
 
-BenchmarkProvider = Callable[[Mapping[str, float]], float | None]
+BenchmarkProvider = Callable[[Mapping[str, float]], Optional[float]]
 
 
 def dummy_benchmark(row: Mapping[str, float]) -> None:
@@ -1385,7 +1385,6 @@ def _pyfeng_analytic_rows(
             benchmark_arr,
             prices,
             biases,
-            strict=False,
         ):
             rows.append(
                 {
@@ -1474,7 +1473,7 @@ def _reference_bias_rows(
     rows = []
     for model, biases_x1e3 in reference_biases_x1e3.items():
         for ratio, strike, benchmark_price, bias_x1e3 in zip(
-            strike_ratios, strikes, benchmark_prices, biases_x1e3, strict=False
+            strike_ratios, strikes, benchmark_prices, biases_x1e3
         ):
             bias = 1e-3 * float(bias_x1e3)
             rows.append(
@@ -1528,7 +1527,7 @@ def run_table4_experiment(
     strike_ratios = [0.2, 0.4, 0.8, 1.0, 1.2, 1.6, 2.0]
     strikes = [params.f0 * x for x in strike_ratios]
     if benchmark_prices is None:
-        benchmark_prices = {strike: price for strike, price in zip(strikes, TABLE4_FDM, strict=False)}
+        benchmark_prices = {strike: price for strike, price in zip(strikes, TABLE4_FDM)}
     rows = []
 
     for idx, step in enumerate([1.0, 0.25, 0.0625]):
@@ -1580,7 +1579,7 @@ def run_table5_experiment(
     strike_ratios = [0.2, 0.4, 0.8, 1.0, 1.2, 1.6, 2.0]
     strikes = [params.f0 * x for x in strike_ratios]
     if benchmark_prices is None:
-        benchmark_prices = {strike: price for strike, price in zip(strikes, TABLE5_FDM, strict=False)}
+        benchmark_prices = {strike: price for strike, price in zip(strikes, TABLE5_FDM)}
     rows = []
 
     for idx, step in enumerate([1.0, 0.25, 0.0625]):
@@ -1632,7 +1631,7 @@ def run_table6_experiment(
     strike_ratios = [0.4, 0.8, 1.0, 1.2, 1.6, 2.0]
     strikes = [params.f0 * x for x in strike_ratios]
     if benchmark_prices is None:
-        benchmark_prices = {strike: price for strike, price in zip(strikes, TABLE6_FDM, strict=False)}
+        benchmark_prices = {strike: price for strike, price in zip(strikes, TABLE6_FDM)}
 
     mc = MonteCarloConfig(maturity=maturity, step=1.0, n_paths=n_paths, seed=seed0)
     summary = repeated_pricing(
@@ -1653,7 +1652,7 @@ def run_table6_experiment(
     rows = [summary]
     for (model, step), ref in TABLE6_BASELINE_REFERENCE.items():
         for ratio, strike, benchmark_price, bias_x1e3 in zip(
-            strike_ratios, strikes, TABLE6_FDM, ref["bias_x1e3"], strict=False
+            strike_ratios, strikes, TABLE6_FDM, ref["bias_x1e3"]
         ):
             bias = 1e-3 * float(bias_x1e3)
             rows.append(
@@ -2177,4 +2176,3 @@ def run_full_validation(
 def rerun_paper_scale_validation() -> dict[str, object]:
     """Convenience helper for a full paper-scale validation run."""
     return run_full_validation(quick_mode=False)
-
