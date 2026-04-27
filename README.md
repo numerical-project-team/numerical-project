@@ -62,7 +62,7 @@ where
 \mu=\mathbb{E}[I_t^h\mid\sigma_{t+h}],\qquad
 a=\sqrt{\log\left(1+\frac{36}{25}v^2\right)},\qquad
 v=
-\frac{\sqrt{\operatorname{Var}(I_t^h\mid\sigma_{t+h})}}
+\frac{\sqrt{\mathrm{Var}(I_t^h\mid\sigma_{t+h})}}
 {\mathbb{E}[I_t^h\mid\sigma_{t+h}]}.
 ```
 
@@ -71,7 +71,7 @@ The second difficult quantity is the conditional forward price. For `0 < beta < 
 ```math
 F_{t+h}\mid\sigma_{t+h},I_t^h
 \approx
-\operatorname{CEV}_\beta
+\mathrm{CEV}_\beta
 \left(
 \bar F_t^h,
 (\rho^*)^2\sigma_t^2hI_t^h
