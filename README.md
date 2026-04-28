@@ -108,6 +108,7 @@ Algorithm 3 then samples the CEV transition exactly using a Gamma-Poisson-Gamma 
 - `notebooks/paper_reproduction_walkthrough.ipynb`: presentation-oriented walkthrough with formulas, sanity checks, paper tables, figure datasets, and validation
 - `notebooks/replication_sanity_checks.ipynb`: notebook with model-level sanity checks and validation summaries
 - `requirements.txt`: lightweight dependency list for the replication environment
+- `notebooks/asian_option_extension.ipynb`: path-dependent extension notebook that uses the replicated SABR Monte Carlo simulator to price arithmetic-average Asian call options and compare them with European calls.
 
 ## What is implemented
 
@@ -117,6 +118,7 @@ Algorithm 3 then samples the CEV transition exactly using a Gamma-Poisson-Gamma 
 - Exact CEV sampling for `0 < beta < 1`
 - Special handling for `beta = 1` and `|rho| = 1`
 - European call pricing from Monte Carlo samples
+- Arithmetic-average Asian call extension using the replicated SABR Monte Carlo path simulation
 - Table 3 parameter presets as named cases
 - Direct experiment entrypoints for Tables 1, 2, 4, 5, 6, 7
 - Figure 1 moment-comparison dataset
@@ -195,6 +197,11 @@ For a shorter sanity-check-only notebook, open:
 ```text
 .\notebooks\replication_sanity_checks.ipynb
 ```
+
+For the path-dependent Asian option extension, open:
+
+```text
+.\notebooks\asian_option_extension.ipynb
 
 ## Notes
 
